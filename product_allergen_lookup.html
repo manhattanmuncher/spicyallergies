@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product allergen lookup — Open Food Facts</title>
+<style>
+  body{font-family:-apple-system,Arial,sans-serif;color:#222;max-width:820px;margin:0 auto;padding:22px;line-height:1.5;}
+  h1{font-size:22px;margin-bottom:4px;} .sub{color:#666;font-size:13px;margin-top:0;}
+  .card{border:1px solid #e0e0e0;border-radius:10px;padding:16px 18px;margin:14px 0;}
+  label{font-weight:600;font-size:13px;display:block;margin-bottom:4px;}
+  input{font-size:15px;padding:8px 10px;border:1px solid #bbb;border-radius:7px;width:60%;}
+  button{font-size:14px;padding:8px 16px;border:0;border-radius:7px;background:#1f6feb;color:#fff;font-weight:600;cursor:pointer;margin-left:6px;}
+  button.alt{background:#eee;color:#222;}
+  .notice{background:#fff4f4;border:1px solid #f0c0c0;border-radius:8px;padding:12px 14px;font-size:12.5px;}
+  .hit{background:#f4c7c3;color:#b00000;font-weight:700;padding:3px 9px;border-radius:5px;display:inline-block;margin:3px 5px 3px 0;}
+  .trace{background:#fff2cc;color:#9a7400;font-weight:700;padding:3px 9px;border-radius:5px;display:inline-block;margin:3px 5px 3px 0;}
+  .ok{color:#2e7d32;font-weight:600;}
+  .muted{color:#777;font-size:12.5px;}
+  .res{display:flex;gap:12px;align-items:center;padding:8px;border-bottom:1px solid #eee;cursor:pointer;}
+  .res:hover{background:#eef6ff;} .res img{width:46px;height:46px;object-fit:contain;}
+  .pname{font-weight:600;} table{border-collapse:collapse;font-size:13px;margin-top:8px;}
+  td{padding:3px 10px 3px 0;} .err{color:#b00000;font-weight:600;}
+  code{background:#f3f3f3;padding:1px 5px;border-radius:4px;}
+</style></head>
+<body>
+<h1>Product allergen lookup</h1>
+<p class="sub">Live, label-declared allergens from <b>Open Food Facts</b>, mapped to your preference columns.</p>
+
+<div class="notice">
+<b>Use this to verify a real product you buy.</b> Best results come from the <b>barcode</b> (the
+13-digit EAN on the package). Name search is a convenience — relevance can be loose, so always
+confirm you picked the right brand/size. Open Food Facts is crowdsourced and may be incomplete or
+out of date for a given product, so the <b>physical product label remains the legal source of truth</b>
+for allergy-critical decisions. Declared allergens follow EU Reg. 1169/2011 Annex II; the intolerance
+columns (Lactose, Fructose, Citrus, Stone fruit, Histamine) are not declarable allergens and will not
+appear here.
+</div>
+
+<div class="card">
+  <label for="bc">Look up by barcode (EAN)</label>
+  <input id="bc" placeholder="e.g. 8715035110106" inputmode="numeric">
+  <button onclick="byBarcode()">Look up</button>
+</div>
+
+<div class="card">
+  <label for="nm">…or search by product name</label>
+  <input id="nm" placeholder="e.g. Kikkoman soy sauce">
+  <button class="alt" onclick="byName()">Search</button>
+  <div id="results"></div>
+</div>
+
+<div id="out"></div>
+
+<p class="muted">Data: Open Food Facts (openfoodfacts.org), retrieved live when you search. This tool sends
+only your query to Open Food Facts and stores nothing.</p>
+
+<script>
+// Open Food Facts allergen tag -> your preference column(s)
+const MAP = {
+  "en:fish":["Fish allergy"],
+  "en:crustaceans":["Shellfish allergy"], "en:molluscs":["Shellfish allergy"],
+  "en:milk":["Milk allergy (note: also relevant to Lactose intolerance)"],
+  "en:eggs":["Egg allergy"], "en:peanuts":["Peanut allergy"],
+  "en:nuts":["Tree nut allergy"], "en:soybeans":["Soy allergy"],
+  "en:sesame-seeds":["Sesame allergy"], "en:mustard":["Mustard allergy"],
+  "en:celery":["Celery allergy"], "en:gluten":["Wheat allergy","Gluten intolerance"],
+  "en:sulphur-dioxide-and-sulphites":["Sulfite allergy"],
+  "en:lupin":["Lupin (no column — note for completeness)"]
+};
+const pretty = t => (t||"").replace(/^en:/,"").replace(/-/g," ");
+
+function mapList(tags){
+  const cols = new Set(); const unknown = [];
+  (tags||[]).forEach(t=>{ if(MAP[t]) MAP[t].forEach(c=>cols.add(c)); else unknown.push(pretty(t)); });
+  return {cols:[...cols], unknown};
+}
+
+async function fetchJSON(url){
+  const r = await fetch(url, {headers:{"Accept":"application/json"}});
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return r.json();
+}
+
+function render(p){
+  const out = document.getElementById("out");
+  if(!p){ out.innerHTML = '<div class="card err">Product not found. Try the barcode, or a different name.</div>'; return; }
+  const a = mapList(p.allergens_tags);
+  const tr = mapList(p.traces_tags);
+  let html = '<div class="card">';
+  html += '<div style="display:flex;gap:14px;align-items:center;">';
+  if(p.image_front_small_url) html += `<img src="${p.image_front_small_url}" style="width:64px;height:64px;object-fit:contain;">`;
+  html += `<div><div class="pname" style="font-size:17px;">${p.product_name||"(no name)"}</div>
+           <div class="muted">${p.brands||""} ${p.code?(" · barcode "+p.code):""}</div></div></div>`;
+
+  html += '<h3 style="margin:14px 0 4px;">Contains (declared):</h3>';
+  if(a.cols.length || a.unknown.length){
+    a.cols.forEach(c=>html+=`<span class="hit">⚠ ${c}</span>`);
+    a.unknown.forEach(u=>html+=`<span class="hit">⚠ ${u}</span>`);
+  } else html += '<span class="ok">No allergens declared in this record.</span>';
+
+  html += '<h3 style="margin:14px 0 4px;">May contain (traces):</h3>';
+  if(tr.cols.length || tr.unknown.length){
+    tr.cols.forEach(c=>html+=`<span class="trace">${c}</span>`);
+    tr.unknown.forEach(u=>html+=`<span class="trace">${u}</span>`);
+  } else html += '<span class="muted">None declared.</span>';
+
+  html += '<p class="muted" style="margin-top:14px;">Reminder: intolerance columns (Lactose, Fructose, '
+        + 'Citrus, Stone fruit, Histamine) are not declarable allergens and never appear above. '
+        + 'Confirm against the physical label before serving an allergy client.</p>';
+  html += '</div>';
+  out.innerHTML = html;
+}
+
+async function byBarcode(){
+  const bc = document.getElementById("bc").value.trim().replace(/\s/g,"");
+  if(!bc) return;
+  document.getElementById("out").innerHTML = '<div class="card muted">Looking up…</div>';
+  try{
+    const d = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(bc)}.json?fields=code,product_name,brands,image_front_small_url,allergens_tags,traces_tags`);
+    render(d.status===1 ? {...d.product, code:bc} : null);
+  }catch(e){ document.getElementById("out").innerHTML = `<div class="card err">Lookup failed (${e.message}). Check the barcode or your connection.</div>`; }
+}
+
+async function byName(){
+  const q = document.getElementById("nm").value.trim();
+  if(!q) return;
+  const res = document.getElementById("results");
+  res.innerHTML = '<p class="muted">Searching…</p>';
+  try{
+    const d = await fetchJSON(`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=12&fields=code,product_name,brands,image_front_small_url,allergens_tags,traces_tags`);
+    const prods = (d.products||[]).filter(p=>p.product_name);
+    if(!prods.length){ res.innerHTML='<p class="muted">No matches — try the barcode instead.</p>'; return; }
+    res.innerHTML = '<p class="muted">Pick the exact product (confirm brand &amp; size):</p>';
+    prods.forEach(p=>{
+      const div=document.createElement("div"); div.className="res";
+      div.innerHTML = (p.image_front_small_url?`<img src="${p.image_front_small_url}">`:'<img>')
+        + `<div><div class="pname">${p.product_name}</div><div class="muted">${p.brands||""} ${p.code?(" · "+p.code):""}</div></div>`;
+      div.onclick = ()=>{ render(p); window.scrollTo(0,document.body.scrollHeight); };
+      res.appendChild(div);
+    });
+  }catch(e){ res.innerHTML = `<p class="err">Search failed (${e.message}). The name endpoint can be busy — try again, or use the barcode.</p>`; }
+}
+document.getElementById("bc").addEventListener("keydown",e=>{if(e.key==="Enter")byBarcode();});
+document.getElementById("nm").addEventListener("keydown",e=>{if(e.key==="Enter")byName();});
+</script>
+</body></html>
